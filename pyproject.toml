@@ -52,6 +52,7 @@ dependencies = [
     # cu12 wheels only exist for x86_64; Blackwell / aarch64 requires cu13.
     "tensorrt-cu12>=10.15.1.29; platform_machine == 'x86_64'",
     "tensorrt-cu13>=10.15.1.29; platform_machine == 'aarch64'",
+    "websockets>=16.0",
 ]
 
 [project.optional-dependencies]

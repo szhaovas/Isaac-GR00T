@@ -27,6 +27,15 @@ from gr00t.data.utils import to_json_serializable
 
 from .policy import BasePolicy
 
+import asyncio
+import logging
+import websockets
+import websockets.asyncio.server as _server
+import http
+import traceback
+from .msgpack_numpy import Packer, unpackb
+
+logger = logging.getLogger(__name__)
 
 class MsgSerializer:
     """msgpack_numpy serializer with a hard ``allow_pickle=False`` boundary.
@@ -221,6 +230,81 @@ class PolicyServer:
         server.run()
 
 
+class WebsocketPolicyServer:
+    def __init__(
+        self,
+        policy: BasePolicy,
+        host: str = "0.0.0.0",
+        port: int = 8000,
+    ):
+        self.policy = policy
+        self._host = host
+        self._port = port
+        self._endpoints: dict[str, EndpointHandler] = {}
+
+    def run(self):
+        asyncio.run(self._run_async())
+    
+    async def _run_async(self):
+        async with _server.serve(
+            self._handler,
+            self._host,
+            self._port,
+            compression=None,
+            max_size=None,
+            process_request=_health_check,
+        ) as server:
+            logger.info(
+                f"Websocket server is ready and listening on "
+                f"ws://{self._host}:{self._port}"
+            )
+            await server.serve_forever()
+
+    async def _handler(self, websocket: _server.ServerConnection):
+        logger.info(f"Connection from {websocket.remote_address} opened")
+        
+        packer = Packer()
+        await websocket.send(packer.pack({})) # dummy metadata
+
+        while True:
+            try:
+                obs = unpackb(await websocket.recv())
+                obs_newkey = {
+                    "video.image": obs["observation/image"][None, None, :],
+                    "video.wrist_image": obs["observation/wrist_image"][None, None, :],
+                    "state.x": np.array([[[obs["observation/state"][0]]]]).astype(np.float32),
+                    "state.y": np.array([[[obs["observation/state"][1]]]]).astype(np.float32),
+                    "state.z": np.array([[[obs["observation/state"][2]]]]).astype(np.float32),
+                    "state.roll": np.array([[[obs["observation/state"][3]]]]).astype(np.float32),
+                    "state.pitch": np.array([[[obs["observation/state"][4]]]]).astype(np.float32),
+                    "state.yaw": np.array([[[obs["observation/state"][5]]]]).astype(np.float32),
+                    "state.gripper": np.array([[obs["observation/proprio"][-2:]]]).astype(np.float32),
+                    "annotation.human.action.task_description": [obs["prompt"]],
+                }
+                
+                action = self.policy.get_action(obs_newkey)[0]
+                
+                action_arr = [action[key] for key in ['action.x', 'action.y', 'action.z', 'action.roll', 'action.pitch', 'action.yaw', 'action.gripper']]
+                action_arr = np.stack(action_arr, axis=-1)
+                
+                await websocket.send(packer.pack({
+                    "actions": action_arr.squeeze()
+                }))
+            except websockets.ConnectionClosed:
+                logger.info(
+                    f"Connection from {websocket.remote_address} closed"
+                )
+                break
+            except Exception as e:
+                logger.error(f"Error in websocket server: {e}")
+                await websocket.send(traceback.format_exc())
+                await websocket.close(
+                    code=websockets.frames.CloseCode.INTERNAL_ERROR,
+                    reason="Internal server error. Traceback included in previous frame.",
+                )
+                raise
+
+
 class PolicyClient(BasePolicy):
     def __init__(
         self,
@@ -321,3 +405,11 @@ class PolicyClient(BasePolicy):
         raise NotImplementedError(
             "check_action is not implemented. Please use `strict=False` to disable strict mode or implement this method in the subclass."
         )
+
+def _health_check(
+    connection: _server.ServerConnection, request: _server.Request
+) -> _server.Response | None:
+    if request.path == "/healthz":
+        return connection.respond(http.HTTPStatus.OK, "OK\n")
+    # Continue with the normal request handling.
+    return None

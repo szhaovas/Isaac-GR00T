@@ -24,7 +24,7 @@ from gr00t.data.embodiment_tags import EmbodimentTag
 from gr00t.data.types import ModalityConfig
 from gr00t.policy.gr00t_policy import Gr00tPolicy
 from gr00t.policy.replay_policy import ReplayPolicy
-from gr00t.policy.server_client import PolicyServer
+from gr00t.policy.server_client import PolicyServer, WebsocketPolicyServer
 import tyro
 
 
@@ -148,7 +148,7 @@ def main(config: ServerConfig):
 
         policy = Gr00tSimPolicyWrapper(policy)
 
-    server = PolicyServer(
+    server = WebsocketPolicyServer(
         policy=policy,
         host=config.host,
         port=config.port,
