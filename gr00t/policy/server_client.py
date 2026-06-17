@@ -283,6 +283,7 @@ class WebsocketPolicyServer:
                 }
                 
                 action = self.policy.get_action(obs_newkey)[0]
+                action['action.gripper'] = -2*action['action.gripper'] + 1
                 
                 action_arr = [action[key] for key in ['action.x', 'action.y', 'action.z', 'action.roll', 'action.pitch', 'action.yaw', 'action.gripper']]
                 action_arr = np.stack(action_arr, axis=-1)
